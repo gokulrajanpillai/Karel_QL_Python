@@ -1,119 +1,105 @@
+import KarelController
 import KarelEnvironment
 import threading
 import time
 
-# Array representing the final set of instructions
-final_instruction = []
+# Discount or gamma value defining whether immediate rewards should have priority
+# Here it is set close to zero to give more importance to future rewards
+discount = 0.3
 
-# Array representing the reward matrix
-r_matrix = {}
-
-# Array representing the Q-matrix
-q_matrix = {}
-
-# Array representing the states of the system
+# States and actions defining the behavior of the system
+actions = []
 states = []
 
-# Array representing the possible set of actions for the states in the system
-actions = []
+# Q-matrix defining the policies for what action should be taken on each particular state of the system
+q_matrix = {}
 
-# Gamma, a.k.a discount value, determines the effect of current rewards on the Q-matrix
-# If discount is close to one, current rewards will have direct effect on
-# values in Q-matrix and if it is close to zero, they would not have any
-# effect at all
-gamma = 0.7
+# Initialize the actions of the environment
+def init_actions():
+    global actions
+    actions = KarelController.karel_actions()
 
-# Alpha represents the learning rate of the algorithm
-alpha = 1
+# Initialize the states of the system
+def init_states():
+    global states
+    states = KarelController.karel_states()
 
-# Configure states for the Q_matrix
-def configure_states():
-    # Add states for QL from the KarelEnvironment
-    for i in range(KarelEnvironment.DIM_X):
-        for j in range(KarelEnvironment.DIM_Y):
-            states.append((i, j))
-
-# Configure actions for the Q matrix
-def configure_actions():
-    # Add actions for QL
-    for action in KarelEnvironment.karel_actions:
-        actions.append(action)
-
-# Update Q-matrix values
-def initialize_qmatrix_values():
-    print("States: ",states)
+# Initialize q-matrix values
+def init_q_matrix_values():
     for state in states:
         temp = {}
-        print("Actions: ",actions)
         for action in actions:
-            temp[action] = 0
-            if state == KarelEnvironment.KAREL_END_STATE:
-                temp[action] = 1
+            temp[action] = 0.1
         q_matrix[state] = temp
-    print("Q-matrix is ",q_matrix)
 
-# Initialize QLearning algorithm
-def initialize_qlearning():
-    configure_states()
-    configure_actions()
-    initialize_qmatrix_values()
+# Initialize reward matrix from the special cells that are defined
+def init_r_matrix_values():
+    special_cells = KarelController.special_cells()
+    for (i, j, color, reward) in special_cells:
+        for action in actions:
+            q_matrix[(i, j)][action] = reward
 
-# Fetch q-value for state and action from the Q-matrix
-def qvalue_for_state_and_action(state, action):
-    return q_matrix[state][action]
+# Get the best action for the given state by finding the action with the highest Q-value
+def max_q_value_for_state(state):
+    best_q_value = None
+    best_action = None
+    for action, q_value in q_matrix[state].items():
+        if best_q_value is None or (q_value > best_q_value):
+            best_q_value = q_value
+            best_action = action
+    return best_action, best_q_value
 
-# Fetch action with maximum Q-value using the current state and Q-matrix
-def best_action_for_state(current_state):
-    action = None
-    q_value = None
-    # Go through all the action and q_value combinations of the Q-matrix for the provided current state
-    for i_action, i_q_value in q_matrix[current_state].items():
-        # If no action has been assigned so far, then assign the selected action from the Q-matrix
-        # Or, if the q_value of iterated action (i_action) is greater than the q_value of the selected action, then assign the selected action as the iterated action
-        if action is None or (i_q_value > q_value):
-            q_value = i_q_value
-            action = i_action
-    print("best action is ",action," for state ",current_state," with q-value ",q_value)
-    return action, q_value
+# Update the value of Q-matrix
+def update_q_matrix(state, action, alpha, inc):
+    q_matrix[state][action] *= 1 - alpha
+    q_matrix[state][action] += alpha * inc
 
-# Update q-value for a given state and action
-def update_qvalue_for_state_and_action(state, action, reward):
-    q_matrix[state][action] += alpha * ()
-    return "Hello"
-
-# Perform the action for the given state
-def perform(state, action):
-    print("perform action ",action," for state ",state)
-    import KarelController
-    reward = KarelController.perform_action(action)
-    return reward
-
-# Q-Learning algorithm
 def run():
+    global discount
     time.sleep(1)
-    print("Q-Learning invoked")
+    alpha = 1
+    count = 1
     while True:
-        # Fetch the current state of Karel in the environment
-        state = KarelEnvironment.karel_current_state
-        # Select the best action to perform for the current state using the Q-matrix
-        action, q_value = best_action_for_state(state)
-        # Perform the action for the current state and retrieve the new state and reward
-        (new_state, reward) = perform(state, action)
-        # Fetch the q_value for the new state using the Q-matrix
-        action, q_value = best_action_for_state(new_state)
-        # Update the q-value in the Q-matrix using the reward from the KarelEnvironment
-        update_qvalue_for_state_and_action(state, action)
+        # Find the current position of Karel
+        karel_position = KarelController.current_position_of_karel()
+        current_state = karel_position
+        # Retrieve the best action for the state
+        best_action, max_val = max_q_value_for_state(current_state)
+        # Append action to KarelController final set of actions
+        KarelController.final_set_of_actions.append(best_action)
+        # Perform the action and retrieve the reward and future state
+        (current_state, best_action, reward, future_state) = KarelController.perform_action(best_action)
+
+        # Find the best action for the future state retrieved
+        best_future_action, max_val = max_q_value_for_state(future_state)
+        # Calculate value to increment
+        increment = reward + discount * max_val
+        # Update Q-matrix with the incremented value
+        update_q_matrix(current_state, best_action, alpha, increment)
+
+        # Check if the game has restarted
+        count += 1.0
+        if KarelController.should_restart():
+            if KarelController.should_terminate():
+                print ("Final actions: ",KarelController.final_set_of_actions)
+                sys.exit(0)
+            else:
+                # Clear action array of controller
+                KarelController.final_set_of_actions = []
+            time.sleep(0.01)
+            count = 1.0
+
+        # Reduce the learning rate
+        alpha = pow(count, -0.1)
+
         # MODIFY THIS SLEEP IF THE GAME IS GOING TOO FAST.
         time.sleep(0.1)
 
-# Start daemon for Q-Learning algorithm
-def start_daemon():
-    thread = threading.Thread(target=run)
-    thread.daemon = True
-    thread.start()
-
-# Initialize and start the algorithm
 def init_and_start():
-    print("init and start q-learning")
-    initialize_qlearning()
-    start_daemon()
+    init_actions()
+    init_states()
+    init_q_matrix_values()
+    init_r_matrix_values()
+    t = threading.Thread(target=run)
+    t.daemon = True
+    t.start()
